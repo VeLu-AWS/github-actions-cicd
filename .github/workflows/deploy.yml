@@ -1,4 +1,4 @@
-name: Deploy to AWS EC2
+name: Build and Test Docker Image
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
       - main
 
 jobs:
-  deploy:
-    name: Build and Deploy
+  build-and-test:
+    name: Build, Lint, and Test
     runs-on: ubuntu-latest
 
     steps:
@@ -22,43 +22,24 @@ jobs:
         run: |
           docker build -t railman-app:latest .
 
-      - name: Save Docker image as tar
+      - name: Run container for smoke test
         run: |
-          docker save railman-app:latest | gzip > railman-app.tar.gz
+          docker run -d --name railman-test -p 8080:80 railman-app:latest
+          sleep 5
+          docker ps
 
-      - name: Copy Docker image to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "railman-app.tar.gz"
-          target: "/home/ubuntu/"
+      - name: Verify Nginx is serving content
+        run: |
+          curl -s http://localhost:8080 | grep -i "Railman" && \
+          echo "✅ App is serving content successfully"
 
-      - name: Deploy on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd /home/ubuntu
-            docker load < railman-app.tar.gz
-            docker stop railman-app || true
-            docker rm railman-app || true
-            docker run -d \
-              --name railman-app \
-              --restart unless-stopped \
-              -p 80:80 \
-              railman-app:latest
-            echo "Deployment successful!"
+      - name: Stop test container
+        run: |
+          docker stop railman-test
+          docker rm railman-test
 
-      - name: Verify deployment
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            docker ps | grep railman-app
-            echo "App is running!"
+      - name: Build summary
+        run: |
+          echo "## ✅ Build Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Docker image built and smoke-tested successfully." >> $GITHUB_STEP_SUMMARY
+          echo "Ready for deployment to AWS EC2 (Mumbai - ap-south-1)." >> $GITHUB_STEP_SUMMARY
